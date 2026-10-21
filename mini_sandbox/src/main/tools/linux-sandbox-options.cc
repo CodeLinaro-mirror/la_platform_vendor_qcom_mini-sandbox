@@ -108,7 +108,7 @@ static void Usage(char *program_name, const char *fmt, ...) {
       "network, chroot) \n"
       "  -c if set, forces the capabilities sandbox (drops capabilities and "
       "sets no-new-privs) instead of the namespace based one, same as setting "
-      "MINI_SANDBOX_DOCKER_UNPRIVILEGED=1\n"
+      "MINI_SANDBOX_ISOLATION_MODE=capabilities\n"
       " -k directory ot mount as overlayfs inside the sanbdox. Only available "
       "with -o\n"
       "  -h <sandbox-dir>  if set, chroot to sandbox-dir and only "

@@ -163,16 +163,6 @@ static int StartLoggingAndWorkingDir() {
   LogSystem();
   PRINT_DEBUG("UserNamespaceSupported = %d", UserNamespaceSupported());
 
-#ifdef LIBMINISANDBOX
-  docker_mode = CheckDockerMode();
-#endif
-
-  // The -c flag forces the capabilities sandbox even when the environment
-  // would allow the namespace based one.
-  if (opt.force_capabilities) {
-    docker_mode = UNPRIVILEGED_CONTAINER;
-  }
-
   // Ask the kernel to kill us with SIGKILL if our parent dies.
   if (prctl(PR_SET_PDEATHSIG, SIGKILL) < 0) {
     MiniSbxReportGenericError("prctl");
@@ -237,6 +227,12 @@ int MiniSbxStartImpl(MiniSbxRunTime& rt) {
 
 
 int MiniSbxStartMode(MiniSbxExecMode mode) {
+  // On the CLI path main() detects this before parsing the options, the
+  // library has no such entry point so we do it here.
+  if (mode == MiniSbxExecMode::LIB) {
+    docker_mode = CheckDockerMode();
+  }
+
   auto rt = MakeMiniSbxRunTime(mode);
   if (!rt)
     return -1;

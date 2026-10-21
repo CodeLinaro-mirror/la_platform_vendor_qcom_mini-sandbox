@@ -80,6 +80,12 @@ static MiniSbxIsolationType ParseIsolationType(const char* s) {
 
 
 std::unique_ptr<MiniSbxIsolation> MakeMiniSbxIsolation() {
+  // The -c flag is an explicit request for the capabilities isolation, so it
+  // wins over both MINI_SANDBOX_ISOLATION_MODE and the detection below.
+  if (opt.force_capabilities) {
+    return std::make_unique<MiniSbxIsolationCapabilities>();
+  }
+
   const char* env = std::getenv(kIsolationModeEnv);
   // kind gets assigned only if we use the MINI_SANDBOX_ISOLATION_MODE 
   // env variable. If that env is not defined we check what's supported
@@ -99,7 +105,6 @@ std::unique_ptr<MiniSbxIsolation> MakeMiniSbxIsolation() {
     default:
       break;
   }
-
 
   if (UserNamespaceSupported()) {
     return std::make_unique<MiniSbxIsolationNamespaces>();
