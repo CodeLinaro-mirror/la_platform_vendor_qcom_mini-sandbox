@@ -17,8 +17,8 @@
 struct Options;
 extern Options opt;
 
-void DropCapabilitiesExcept(uint64_t keep);
-void DropCapabilities();
+int DropCapabilitiesExcept(uint64_t keep);
+int DropCapabilities();
 int CapsRunTimeLib();
 int CapsRunTimeCLI();
 
