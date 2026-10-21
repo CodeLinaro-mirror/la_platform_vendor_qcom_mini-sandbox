@@ -83,8 +83,18 @@ namespace fs = std::experimental::filesystem;
 #define ROOT "/"
 #define MINISBX_TMP_INIT "/tmp/mini-sandbox-init"
 
+#ifndef TMP
+#define TMP "/tmp"
+#endif
+
+#define DEV_LINKS 4
+#define CAP_VERSION _LINUX_CAPABILITY_VERSION_3
+#define CAP_WORDS   _LINUX_CAPABILITY_U32S_3
+#define BIT(n)                       (1ULL << (n))
 #define OVELAY_MAX_DEPTH 5
 #define OVELAY_DEPTH_THRESHOLD 2
+
+#define KEEP 0
 
 #ifndef TEMP_FAILURE_RETRY
 // Some C standard libraries like musl do not define this macro, so we'll
@@ -640,11 +650,17 @@ static void MakeFilesystemPartiallyReadOnly(bool need_mount, int num_of_mounts) 
     if (need_mount) {
       PRINT_DEBUG("%s need to mount %s ?", __func__, ent->mnt_dir);
 
-      // We First check if we are dealing with autofs/nfs . In those cases we do not want to mount 
-      // each mount point under the autofs/nfs entry point cause it'd take too much time.
+      // We first check if we are dealing with a network/automount filesystem. In those cases we do
+      // not want to mount each mount point under the entry point: it'd take too much time, and worse,
+      // any stat() on such a path (e.g. the fs::exists() check below) can block forever. A hard NFS
+      // mount pointing at a dead server (e.g. a *_test filer) will hang a stat() indefinitely, and
+      // AT_NO_AUTOMOUNT does NOT help once the filesystem is already mounted. So we must skip these
+      // by TYPE alone, before any call that touches the path. Match nfs/nfs4/... by prefix so future
+      // variants are covered too.
       std::string type(ent->mnt_type);
-      if (type.compare("autofs") == 0 || type.compare("nfs") == 0) {
-        PRINT_DEBUG("%s mounted in autofs/nfs. Skipping", ent->mnt_dir);
+      if (type == "autofs" || type.rfind("nfs", 0) == 0 ||
+          type == "cifs"   || type.rfind("fuse", 0) == 0) {
+        PRINT_DEBUG("%s mounted in network fs (%s). Skipping", ent->mnt_dir, type.c_str());
         continue;
       }
 
@@ -816,6 +832,71 @@ static void EnterWorkingDirectory() {
 
     DIE("chdir(%s)", path.c_str());
   }
+}
+
+static void drop_caps_ep_except(uint64_t keep) {
+  struct __user_cap_header_struct hdr = {
+    .version = CAP_VERSION,
+    .pid = 0,
+  };
+  struct __user_cap_data_struct data[CAP_WORDS];
+  int i;
+
+  if (prctl(PR_SET_NO_NEW_PRIVS, 1, 0, 0, 0) < 0)
+    DIE("Couldn't set PR_SET_NO_NEW_PRIVS");
+
+  memset(data, 0, sizeof(data));
+
+  if (syscall(SYS_capget, &hdr, data))
+    DIE("Couldn't get current capabilities");
+
+  if (prctl(PR_CAP_AMBIENT, PR_CAP_AMBIENT_CLEAR_ALL, 0, 0, 0) < 0 &&
+      errno != EINVAL && errno != EPERM)
+    PRINT_DEBUG("PR_CAP_AMBIENT_CLEAR_ALL failed: %s", strerror(errno));
+
+  if (data[CAP_SETPCAP >> 5].effective & (1U << (CAP_SETPCAP & 31))) {
+    long last_cap = 63;
+    FILE *cap_file = fopen("/proc/sys/kernel/cap_last_cap", "r");
+    if (cap_file != nullptr) {
+      if (fscanf(cap_file, "%ld", &last_cap) != 1)
+        last_cap = 63;
+      fclose(cap_file);
+    }
+    if (last_cap < 0)
+      last_cap = 0;
+    if (last_cap > 63)
+      last_cap = 63;
+
+    for (long cap = 0; cap <= last_cap; cap++) {
+      if (keep & (1ULL << cap))
+        continue;
+      if (prctl(PR_CAPBSET_DROP, cap, 0, 0, 0) < 0 && errno != EPERM &&
+          errno != EINVAL)
+        PRINT_DEBUG("PR_CAPBSET_DROP(%ld) failed: %s", cap, strerror(errno));
+    }
+  }
+
+  for (i = 0; i < CAP_WORDS; i++) {
+    uint32_t mask = (uint32_t)(keep >> (32 * i));
+
+    data[i].effective &= mask;
+    data[i].permitted &= mask;
+    data[i].inheritable &= mask;
+  }
+
+  if (syscall(SYS_capset, &hdr, data))
+    DIE("Couldn't drop capabilities");
+}
+
+
+void DropCapabilities() {
+  PRINT_DEBUG("Warning: Sandbox cannot be fully enabled (either due to Docker or AppArmor). "
+          "We'll just drop the capabilities of the current process but cannot provide advanced "
+          "features such as usernamespace, overlayfs, rootless firewall, etc.");
+
+  uint64_t keep = KEEP;
+  drop_caps_ep_except(keep);
+  return;
 }
 
 #if (!(LIBMINISANDBOX))

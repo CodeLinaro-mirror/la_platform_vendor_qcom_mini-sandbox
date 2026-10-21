@@ -454,8 +454,7 @@ void Cleanup() {
         }
       }
     } catch (const std::exception &e) {
-      std::cerr << "Warning: Could not remove the trash files: " << e.what()
-                << std::endl;
+      PRINT_DEBUG("Warning: Could not remove the trash files");
     }
   }
 }
