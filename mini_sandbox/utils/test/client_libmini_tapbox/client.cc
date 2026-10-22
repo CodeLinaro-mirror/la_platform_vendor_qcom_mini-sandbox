@@ -13,6 +13,8 @@
 #include <stdlib.h>
 #include <assert.h>
 #include <errno.h>
+#include <netdb.h>
+#include <string>
 
 #include "connect_with_timeout.h"
 
@@ -106,6 +108,28 @@ static void diagnose_connect_failure() {
     probe_connect("127.0.0.1", 80);  // loopback
 }
 
+
+// The hardcoded ALLOWED_IP is not reachable from every network (it timed out
+// from the GitHub runners). Landlock filters by port only, so the address does
+// not matter to the sandbox: resolve the domain before the sandbox starts and
+// use whatever it currently points to, falling back to the hardcoded one.
+static std::string resolve_allowed_ip() {
+    struct addrinfo hints;
+    memset(&hints, 0, sizeof(hints));
+    hints.ai_family = AF_INET;
+    hints.ai_socktype = SOCK_STREAM;
+    struct addrinfo* res = nullptr;
+    std::string ip = ALLOWED_IP;
+    if (getaddrinfo(ALLOWED_DOMAIN, "80", &hints, &res) == 0 && res) {
+        char buf[INET_ADDRSTRLEN];
+        auto* a = (struct sockaddr_in*)res->ai_addr;
+        if (inet_ntop(AF_INET, &a->sin_addr, buf, sizeof(buf)))
+            ip = buf;
+    }
+    if (res) freeaddrinfo(res);
+    return ip;
+}
+
 int main(int argc, char* argv[]) {
     // This test reports every failure through abort(), which does not flush
     // stdio, and under CI stdout is a pipe and therefore fully buffered. The
@@ -120,6 +144,8 @@ int main(int argc, char* argv[]) {
     printf("Starting program out of the sandbox with pid %d\n", getpid());
     int res = 0;
     int ll_enabled = landlock_test_enabled();
+    std::string allowed_ip = ll_enabled ? resolve_allowed_ip() : std::string(ALLOWED_IP);
+    printf("Allowed IP for %s: %s\n", ALLOWED_DOMAIN, allowed_ip.c_str());
 
     res = mini_sandbox_setup_default();
     assert(res == 0);
@@ -140,7 +166,7 @@ int main(int argc, char* argv[]) {
 #else
     res = mini_sandbox_allow_ipv4("8.8.8.8"); // DNS is always useful :)
     assert(res == 0);
-    res = mini_sandbox_allow_ipv4(ALLOWED_IP);
+    res = mini_sandbox_allow_ipv4(allowed_ip.c_str());
     assert(res == 0);
     res = mini_sandbox_allow_domain(ALLOWED_DOMAIN);
     assert(res == 0);
@@ -149,7 +175,7 @@ int main(int argc, char* argv[]) {
     assert(res == 0);
     
 
-    printf("\n\n!!!! Sandbox started with pid: %d.\n\nFirst Trying to connect to %s (%s)...\n", getpid(), ALLOWED_IP, ALLOWED_DOMAIN);
+    printf("\n\n!!!! Sandbox started with pid: %d.\n\nFirst Trying to connect to %s (%s)...\n", getpid(), allowed_ip.c_str(), ALLOWED_DOMAIN);
     int sock = socket(AF_INET, SOCK_STREAM, 0);
     if (sock < 0) {
         perror("Socket creation failed");
@@ -157,15 +183,15 @@ int main(int argc, char* argv[]) {
         struct sockaddr_in server;
         server.sin_family = AF_INET;
         server.sin_port = htons(80);
-        server.sin_addr.s_addr = inet_addr(ALLOWED_IP);
+        server.sin_addr.s_addr = inet_addr(allowed_ip.c_str());
 
         if (connect(sock, (struct sockaddr *)&server, sizeof(server)) < 0) {
             printf("[---] Connection to %s (%s) failed (not expected): errno=%d (%s) [---]\n",
-                   ALLOWED_IP, ALLOWED_DOMAIN, errno, strerror(errno));
+                   allowed_ip.c_str(), ALLOWED_DOMAIN, errno, strerror(errno));
             diagnose_connect_failure();
             abort();
         } else {
-            printf("[+++] Connection to %s (%s) succeeded (as expected) [+++]\n", ALLOWED_IP, ALLOWED_DOMAIN);
+            printf("[+++] Connection to %s (%s) succeeded (as expected) [+++]\n", allowed_ip.c_str(), ALLOWED_DOMAIN);
         }
         close(sock);
     }
