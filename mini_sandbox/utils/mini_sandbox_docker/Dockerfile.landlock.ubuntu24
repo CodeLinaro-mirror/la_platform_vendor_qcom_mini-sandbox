@@ -39,6 +39,11 @@ ENV PYTHONPATH="/app/release/python/"
 ENV PACKAGE_DIR="/app/release"
 ENV LDFLAGS="-lstdc++fs"
 ENV WORKSPACE="/app/mini-sandbox"
+# The isolation is never selected automatically (see the commented out fallback
+# in MakeMiniSbxIsolation), and this container does have working user
+# namespaces, so without this the sandbox would silently run in namespaces mode
+# and the landlock tests would not exercise landlock at all.
+ENV MINI_SANDBOX_ISOLATION_MODE=landlock
 ENV LANDLOCK_TEST=1
 
 USER app
