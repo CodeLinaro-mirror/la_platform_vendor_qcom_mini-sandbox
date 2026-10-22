@@ -52,7 +52,13 @@ if [[ "${LANDLOCK_TEST:-}" != "1" ]]; then
   check_exit $SCRIPT_DIR/test_default_overlay_over_readonly.sh
 else
   mini-sandbox -D /tmp/dbg.log -- echo 'Ok'
-  grep "Landlock ABI" /tmp/dbg.log
+  cat /tmp/dbg.log
+  # A missing trace means the sandbox ran in another isolation mode, which the
+  # log above shows. Say so, otherwise the bare grep failure looks unrelated.
+  if ! grep "Landlock ABI" /tmp/dbg.log; then
+      echo "Error: no landlock trace in the debug log, the sandbox did not run in landlock mode."
+      exit 1
+  fi
 
 fi
 

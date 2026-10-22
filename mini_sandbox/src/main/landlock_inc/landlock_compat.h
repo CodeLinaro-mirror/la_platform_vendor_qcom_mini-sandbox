@@ -173,6 +173,35 @@ static inline ll_u64 ll_supported_scope_mask_for_abi(int abi) {
     #endif
   #endif
 
+  /* Build environments older than Landlock itself (Ubuntu 18.04, whose kernel
+   * headers are 4.15 based) define neither SYS_landlock_* nor __NR_landlock_*,
+   * so the bridging above leaves them undefined and the wrappers below are
+   * compiled as "not supported" stubs. That is a property of the machine the
+   * binary was built on, not of the one it runs on, so a binary built there
+   * can never use Landlock even on a recent kernel.
+   *
+   * Syscall numbers are stable kernel ABI, so fall back to the literals for
+   * the architectures where 444-446 are correct: they come from the generic
+   * syscall table (arm64, riscv) and are the same on x86_64, x86 and arm.
+   * Architectures with a different numbering keep the stubs.
+   */
+  #if (defined(__x86_64__) && !defined(__ILP32__)) || defined(__i386__) || \
+      defined(__aarch64__) || defined(__arm__) || defined(__riscv)
+
+    #ifndef SYS_landlock_create_ruleset
+      #define SYS_landlock_create_ruleset 444
+    #endif
+
+    #ifndef SYS_landlock_add_rule
+      #define SYS_landlock_add_rule 445
+    #endif
+
+    #ifndef SYS_landlock_restrict_self
+      #define SYS_landlock_restrict_self 446
+    #endif
+
+  #endif
+
 #endif /* LL_HAVE_LANDLOCK_SYSCALLS */
 
 /* ---- Raw syscall wrappers ---- */
