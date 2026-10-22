@@ -60,7 +60,14 @@ void start_thread() {
 
 
 int main(int argc, char* argv[]) {
-    if (argc > 0) 
+    // This test reports every failure through abort(), which does not flush
+    // stdio, and under CI stdout is a pipe and therefore fully buffered. The
+    // printf right before an abort is the only thing that says which check
+    // failed, so keep stdout unbuffered or the log stops at "Aborted" with no
+    // explanation.
+    setvbuf(stdout, nullptr, _IONBF, 0);
+
+    if (argc > 0)
         printf("\n\nExecutable name: %s\n\n", argv[0]);
 
     printf("Starting program out of the sandbox with pid %d\n", getpid());
