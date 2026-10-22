@@ -12,6 +12,7 @@
 #include <pthread.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <errno.h>
 
 #include "connect_with_timeout.h"
 
@@ -58,6 +59,52 @@ void start_thread() {
 #define NOT_ALLOWED_DOMAIN "qualcomm.com"
 
 
+
+
+// Diagnostic for CI: when the connection that must succeed fails, try a few
+// other destinations and print the errno of each. EACCES means landlock
+// denied it, anything else (ETIMEDOUT, ENETUNREACH, ECONNREFUSED...) means
+// the connection was allowed by the sandbox and the network refused it.
+static void probe_connect(const char* ip, int port) {
+    int s = socket(AF_INET, SOCK_STREAM, 0);
+    if (s < 0) {
+        printf("[diag] %s:%d socket() failed: errno=%d (%s)\n", ip, port, errno, strerror(errno));
+        return;
+    }
+    struct sockaddr_in addr;
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    addr.sin_addr.s_addr = inet_addr(ip);
+    int rc = connect_with_timeout(s, (struct sockaddr *)&addr, sizeof(addr), 3);
+    printf("[diag] %s:%d -> %s errno=%d (%s)\n", ip, port,
+           rc == 0 ? "connected" : "failed", errno, strerror(errno));
+    close(s);
+}
+
+static void print_proc_status_lines() {
+    FILE* f = fopen("/proc/self/status", "r");
+    if (!f) return;
+    char line[256];
+    while (fgets(line, sizeof(line), f)) {
+        if (!strncmp(line, "NoNewPrivs", 10) || !strncmp(line, "Seccomp", 7))
+            printf("[diag] %s", line);
+    }
+    fclose(f);
+}
+
+static void diagnose_connect_failure() {
+    printf("[diag] LANDLOCK_TEST=%s MINI_SANDBOX_ISOLATION_MODE=%s\n",
+           getenv("LANDLOCK_TEST") ? getenv("LANDLOCK_TEST") : "(unset)",
+           getenv("MINI_SANDBOX_ISOLATION_MODE") ? getenv("MINI_SANDBOX_ISOLATION_MODE") : "(unset)");
+    print_proc_status_lines();
+    probe_connect(ALLOWED_IP, 80);   // the one that failed, errno again
+    probe_connect(ALLOWED_IP, 443);  // allowed port, same host
+    probe_connect("8.8.8.8", 53);    // allowed port, different host
+    probe_connect("8.8.8.8", 443);   // allowed port, different host
+    probe_connect("8.8.8.8", 21);    // port not allowed: EACCES expected under landlock
+    probe_connect("127.0.0.1", 80);  // loopback
+}
 
 int main(int argc, char* argv[]) {
     // This test reports every failure through abort(), which does not flush
@@ -113,7 +160,9 @@ int main(int argc, char* argv[]) {
         server.sin_addr.s_addr = inet_addr(ALLOWED_IP);
 
         if (connect(sock, (struct sockaddr *)&server, sizeof(server)) < 0) {
-            printf("[---] Connection to %s (%s) failed (not expected) [---]", ALLOWED_IP, ALLOWED_DOMAIN);
+            printf("[---] Connection to %s (%s) failed (not expected): errno=%d (%s) [---]\n",
+                   ALLOWED_IP, ALLOWED_DOMAIN, errno, strerror(errno));
+            diagnose_connect_failure();
             abort();
         } else {
             printf("[+++] Connection to %s (%s) succeeded (as expected) [+++]\n", ALLOWED_IP, ALLOWED_DOMAIN);
