@@ -12,7 +12,8 @@
 # before the tests start lets a Landlock failure be told apart from a kernel
 # that is simply too old (ABI 4 needs Linux 6.7, ABI 1 only 5.13).
 #
-# Informational only: this never fails the test suite.
+# Informational everywhere except when LANDLOCK_TEST=1, where landlock is what
+# the run is about and an unusable ABI fails immediately.
 
 set -u
 
@@ -56,6 +57,9 @@ fi
 
 ABI="$(probe_abi)"
 
+# What the probe could establish about landlock: ok, unusable or unknown.
+LL_STATUS="unknown"
+
 case "$ABI" in
     "")
         echo "landlock ABI: not probed (the probe itself failed to run)"
@@ -63,18 +67,31 @@ case "$ABI" in
     err:*)
         echo "landlock ABI: unsupported, landlock_create_ruleset gave errno ${ABI#err:}"
         echo "              the kernel lacks Landlock or it is not in the LSM list"
+        LL_STATUS="unusable"
         ;;
     *)
         echo "landlock ABI: $ABI (the landlock sandbox needs >= $MIN_ABI)"
         if [ "$ABI" -lt "$MIN_ABI" ]; then
             echo "WARNING:      this kernel is too old for the landlock sandbox."
             echo "              Landlock tests will not pass here; ABI $MIN_ABI needs Linux 6.7+."
+            LL_STATUS="unusable"
+        else
+            LL_STATUS="ok"
         fi
         ;;
 esac
 
+# Only the landlock container depends on landlock being usable, so only there is
+# a negative result a failure. Stopping here, before any test has run, keeps the
+# cause at the top of the log instead of letting it surface further down as an
+# unrelated looking error. "unknown" is deliberately not fatal: not being able
+# to probe is a gap in this script, not a problem with the sandbox.
 if [ "${LANDLOCK_TEST:-}" = "1" ]; then
     echo "LANDLOCK_TEST=1, the landlock specific test paths are active"
+    if [ "$LL_STATUS" = "unusable" ]; then
+        echo "FAIL:         landlock is required for this run but is not usable here."
+        exit 1
+    fi
 fi
 
 exit 0
